@@ -1,0 +1,10 @@
+PAIR = "EUR/GBP"
+
+TIMEFRAME = "M5"
+
+RANGE_PERIOD = 24
+ATR_PERIOD = 14
+RR = 1.5
+
+MIN_RANGE_ATR = 1.5   # было 0.7
+ATR_MULTIPLIER = 0.2  # было 0.5
