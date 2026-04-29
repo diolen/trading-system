@@ -1,15 +1,27 @@
-Вот собранный **единый README.md** под текущее состояние твоего проекта (без воды, но с полной структурой того, что уже реализовано).
+Вот обновлённый **README.md**, приведённый к согласованной **V1 стратегии (range = 30 свечей, price-based логика)** без лишнего усложнения:
 
 ---
 
-````markdown
 # 📊 Trading System (Breakout + Retest Strategy)
 
-Система генерации торговых сигналов на основе:
-- range breakout
-- retest подтверждения
-- ATR volatility filter
-- stateful engine (память рынка)
+Система генерации торговых сигналов на основе простой и формализованной логики:
+
+* range (фиксированный диапазон)
+* breakout (пробой)
+* retest (подтверждение)
+* базовый риск-менеджмент
+
+---
+
+## 🧠 Strategy Version
+
+**Current version: V1 (baseline)**
+
+Особенности:
+
+* Range определяется по фиксированному количеству свечей
+* Нет зависимости от ATR в логике диапазона
+* Простая, детерминированная логика (подходит для отладки и масштабирования)
 
 ---
 
@@ -18,11 +30,17 @@
 Стратегия работает в 3 этапа:
 
 ### 1. Формирование диапазона (Range)
-Определяется локальный диапазон цены:
 
-- `range_high` = максимум за период
-- `range_low` = минимум за период
-- диапазон валиден только при достаточной волатильности
+Берутся последние N свечей:
+
+* `range_high = max(high)`
+* `range_low = min(low)`
+* `range_size = range_high - range_low`
+
+Диапазон валиден, если:
+
+* используется **30 свечей (M15)**
+* размер диапазона ≥ минимального значения
 
 ---
 
@@ -30,32 +48,55 @@
 
 Сигнал пробоя возникает когда:
 
-- цена закрывается выше `range_high` → LONG setup
-- цена закрывается ниже `range_low` → SHORT setup
+* цена закрывается выше `range_high` → LONG setup
+* цена закрывается ниже `range_low` → SHORT setup
+
+Дополнительно:
+
+* свеча должна быть больше среднего размера последних свечей (фильтр импульса)
 
 ---
 
 ### 3. Ретест (Retest confirmation)
 
-Вход происходит только при подтверждении:
+Вход только после подтверждения:
 
 ### LONG:
-- цена касается уровня снизу
-- затем закрывается выше уровня
+
+* цена возвращается к `range_high`
+* не уходит глубже 30% диапазона
+* следующая свеча закрывается вверх
 
 ### SHORT:
-- цена касается уровня сверху
-- затем закрывается ниже уровня
+
+* зеркально
+
+---
+
+## ⏱️ Session Filter
+
+Торговля ведётся только в активное время:
+
+```text
+08:00 – 12:00 UTC (London session)
+```
 
 ---
 
 ## 📐 Риск-менеджмент
 
 ### Stop Loss:
+
 ```text
-LONG:  breakout_level - ATR * 0.5
-SHORT: breakout_level + ATR * 0.5
-````
+LONG:  range_high - buffer
+SHORT: range_low + buffer
+```
+
+Где:
+
+* `buffer = 5 pips`
+
+---
 
 ### Take Profit:
 
@@ -65,84 +106,58 @@ TP = entry ± (risk * RR)
 
 Где:
 
-* RR задаётся в `settings.RR`
+* `RR = 2`
 
 ---
 
-## 📊 Индикаторы
+## 📏 Единицы измерения
 
-### ATR (Average True Range)
-
-Используется для:
-
-* фильтра волатильности
-* расчёта стопов
-* фильтра ложных диапазонов
+Все расчёты ведутся через цену:
 
 ```text
-TR = max(
-    high - low,
-    |high - prev_close|,
-    |low - prev_close|
-)
-
-ATR = SMA(TR, period)
+1 pip = 0.0001
 ```
 
----
+Пример:
 
-## 🧠 Состояние стратегии (State Machine)
-
-Система хранит состояние:
-
-```python
-self.range_high
-self.range_low
-self.range_active
-self.range_created_time
-
-self.breakout_state  # None / "long" / "short"
-self.breakout_level
-
-self.last_breakout_level
-self.last_signal_time
-```
+* 15 pips = 0.0015
+* 5 pips = 0.0005
 
 ---
 
 ## 🔁 Жизненный цикл сигнала
 
-1. Build range
-2. Detect breakout
-3. Wait retest
+1. Build range (30 свечей)
+2. Detect breakout (закрытие за пределами)
+3. Wait retest (до 5 свечей)
 4. Confirm entry
 5. Generate signal
-6. Reset state
+6. Reset
 
 ---
 
-## 🧹 Защита от шума
+## 🧹 Фильтры
 
-### 1. Cooldown
+### 1. Минимальный размер диапазона
 
 ```text
-50 минут между сигналами
+>= 15 pips
 ```
 
 ---
 
-### 2. Anti-repeat level filter
+### 2. Ограничение глубины ретеста
 
-```python
-is_same_level(level1, level2, atr * 0.2)
+```text
+не более 30% range
 ```
 
 ---
 
-### 3. Range validity window
+### 3. Время жизни ретеста
 
 ```text
-range живёт ограниченное время (~200 минут)
+максимум 5 свечей
 ```
 
 ---
@@ -158,11 +173,6 @@ class Signal:
     stop: float
     tp: float
     timestamp: datetime
-
-    def __post_init__(self):
-        self.entry = round(float(self.entry), 5)
-        self.stop = round(float(self.stop), 5)
-        self.tp = round(float(self.tp), 5)
 ```
 
 ---
@@ -172,34 +182,48 @@ class Signal:
 ```
 app/
 │
-├── main.py                 # запуск backtest / live simulation
-├── config.py              # параметры стратегии
+├── main.py
+├── config/
+│   └── settings.py
 │
 ├── data/
-│   └── data_provider.py   # загрузка CSV
+│   └── data_provider.py
 │
 ├── models/
-│   └── signal.py          # структура сигнала
+│   └── signal.py
 │
 ├── strategy/
-│   └── signal_engine.py   # основная логика стратегии
+│   ├── range_detector.py
+│   ├── breakout.py
+│   ├── retest.py
+│   └── signal_engine.py
 │
-├── storage/
-│   └── logger.py          # логирование сигналов
+├── bot/
+│   └── telegram_bot.py
+│
+└── storage/
+    └── logger.py
 ```
 
 ---
 
-## ⚙️ Основные параметры (settings)
-
-Пример:
+## ⚙️ Основные параметры
 
 ```python
-RANGE_PERIOD = 20
-ATR_PERIOD = 14
-MIN_RANGE_ATR = 1.2
-RR = 2.0
-PAIR = "EUR/GBP"
+PAIR = "EURGBP"
+TIMEFRAME = "M15"
+
+PIP = 0.0001
+
+RANGE_CANDLES = 30
+MIN_RANGE_SIZE = 15 * PIP
+
+RETEST_TOLERANCE = 3 * PIP
+RETEST_DEPTH = 0.3
+RETEST_MAX_CANDLES = 5
+
+SL_BUFFER = 5 * PIP
+RR_RATIO = 2
 ```
 
 ---
@@ -212,73 +236,37 @@ python3 -m app.main
 
 ---
 
-## 📈 Выходные данные
-
-Пример сигнала:
-
-```text
-Signal(
-    pair='EUR/GBP',
-    direction='long',
-    entry=0.86758,
-    stop=0.86736,
-    tp=0.86791,
-    timestamp=2024-01-02 11:00:00
-)
-```
-
----
-
 ## ⚠️ Ограничения текущей версии
 
-* тестируется на одном датасете (in-sample)
-* нет spread / slippage симуляции
-* нет фильтра тренда (EMA / HTF bias)
-* нет фильтра рыночного режима (trend vs range)
-* возможен overtrading в некоторых фазах рынка
+* нет ATR фильтра
+* нет фильтра тренда
+* нет spread/slippage
+* нет полноценного backtest engine
+* только базовая логика сигналов
 
 ---
 
-## 🚀 Следующие улучшения (roadmap)
+## 🚀 Roadmap
 
-### 1. Фильтр тренда
+### V2:
 
-* EMA200 bias
-* trade only with trend
+* ATR volatility filter
+* false breakout detection
+* multi-timeframe analysis
 
----
+### V3:
 
-### 2. Фильтр флетов
-
-* ATR compression
-* volatility regime detection
-
----
-
-### 3. Backtest engine
-
-* winrate
-* profit factor
-* drawdown
-* equity curve
-
----
-
-### 4. Realistic execution
-
-* spread simulation
-* slippage
-* delayed fills
+* cTrader API integration
+* полуавтомат / авто-исполнение
 
 ---
 
 ## 📌 Итог
 
-Это rule-based breakout + retest trading engine с:
+Это минималистичная, но строгая breakout + retest система:
 
-* state machine логикой
-* ATR risk model
-* структурированным входом
-* защитой от повторных уровней
+* без переусложнения
+* с чёткими правилами
+* готовая к кодированию и тестированию
 
-```
+---

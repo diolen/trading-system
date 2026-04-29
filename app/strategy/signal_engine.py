@@ -10,48 +10,50 @@ class SignalEngine:
     def __init__(self):
         self.last_signal_time = None
 
-        self.breakout_state = None
+        # breakout state
+        self.breakout_state = None  # "long" / "short"
         self.breakout_level = None
-        self.last_breakout_level = None
+        self.breakout_time = None
 
-        # =========================
-        # RANGE STATE
-        # =========================
+        # anti-repeat
+        self.used_levels = []  # [(level, time)]
+
+        # range state
         self.range_high = None
         self.range_low = None
         self.range_active = False
         self.range_created_time = None
 
     # =========================
-    # ATR
+    # LEVEL FILTER (старый оставляем для других задач)
     # =========================
-    def calculate_atr(self, df: pd.DataFrame):
-        high = df["high"]
-        low = df["low"]
-        close = df["close"]
-
-        tr = pd.concat([
-            high - low,
-            (high - close.shift()).abs(),
-            (low - close.shift()).abs()
-        ], axis=1).max(axis=1)
-
-        return tr.rolling(settings.ATR_PERIOD).mean()
-
-    # =========================
-    # LEVEL FILTER
-    # =========================
-    def is_same_level(self, level1, level2, atr):
+    def is_same_level(self, level1, level2):
         if level1 is None or level2 is None:
             return False
 
-        return abs(level1 - level2) < atr * 0.2
+        return abs(level1 - level2) < settings.RETEST_TOLERANCE
+
+    # =========================
+    # ANTI-REPEAT
+    # =========================
+    def is_used_level(self, level, current_time):
+        for lvl, t in self.used_levels:
+            if abs(level - lvl) < settings.ANTI_REPEAT_TOLERANCE:
+                return True
+        return False
+
+    def clean_levels(self, current_time):
+        self.used_levels = [
+            (lvl, t)
+            for lvl, t in self.used_levels
+            if (current_time - t) < timedelta(minutes=settings.LEVEL_EXPIRY_MINUTES)
+        ]
 
     # =========================
     # RANGE BUILDER
     # =========================
     def build_range(self, df, current_time):
-        recent = df.iloc[-settings.RANGE_PERIOD-1:-1]
+        recent = df.iloc[-settings.RANGE_CANDLES-1:-1]
 
         self.range_high = recent["high"].max()
         self.range_low = recent["low"].min()
@@ -69,21 +71,27 @@ class SignalEngine:
         return (current_time - self.range_created_time) < timedelta(minutes=200)
 
     # =========================
+    # SESSION FILTER (🔥 исправлено)
+    # =========================
+    def session_allowed(self, current_time):
+        return settings.SESSION_START <= current_time.hour < settings.SESSION_END
+
+    # =========================
     # MAIN LOGIC
     # =========================
     def generate(self, df: pd.DataFrame) -> Signal | None:
 
-        if len(df) < settings.RANGE_PERIOD + settings.ATR_PERIOD:
+        if len(df) < settings.RANGE_CANDLES:
             return None
-
-        df = df.copy()
-        df["atr"] = self.calculate_atr(df)
 
         last = df.iloc[-1]
         current_time = last.name
-        atr = last["atr"]
 
-        if pd.isna(atr):
+        # 🔥 чистим старые уровни
+        self.clean_levels(current_time)
+
+        # ===== SESSION FILTER =====
+        if not self.session_allowed(current_time):
             return None
 
         # ===== COOLDOWN =====
@@ -102,7 +110,7 @@ class SignalEngine:
         range_low = self.range_low
         range_size = range_high - range_low
 
-        if range_size < atr * settings.MIN_RANGE_ATR:
+        if range_size < settings.MIN_RANGE_SIZE:
             return None
 
         # =========================================================
@@ -110,22 +118,42 @@ class SignalEngine:
         # =========================================================
         if self.breakout_state is None:
 
+            avg_size = (df["high"] - df["low"]).rolling(10).mean().iloc[-1]
+            current_size = last["high"] - last["low"]
+
+            if current_size < avg_size:
+                return None
+
+            # LONG breakout
             if last["close"] > range_high:
 
-                if self.is_same_level(range_high, self.last_breakout_level, atr):
+                if self.is_used_level(range_high, current_time):
                     return None
 
                 self.breakout_state = "long"
                 self.breakout_level = range_high
+                self.breakout_time = current_time
                 return None
 
+            # SHORT breakout
             if last["close"] < range_low:
 
-                if self.is_same_level(range_low, self.last_breakout_level, atr):
+                if self.is_used_level(range_low, current_time):
                     return None
 
                 self.breakout_state = "short"
                 self.breakout_level = range_low
+                self.breakout_time = current_time
+                return None
+
+        # =========================================================
+        # RETEST TIMEOUT
+        # =========================================================
+        if self.breakout_time:
+            if current_time - self.breakout_time > timedelta(minutes=15 * settings.RETEST_MAX_CANDLES):
+                self.breakout_state = None
+                self.breakout_level = None
+                self.breakout_time = None
                 return None
 
         # =========================================================
@@ -135,22 +163,15 @@ class SignalEngine:
 
             if last["low"] <= self.breakout_level and last["close"] > self.breakout_level:
 
+                retest_depth = self.breakout_level - last["low"]
+                if retest_depth > range_size * settings.RETEST_DEPTH:
+                    return None
+
                 entry = float(last["close"])
-                stop = self.breakout_level - atr * 0.5
-                tp = entry + (entry - stop) * settings.RR
+                stop = self.breakout_level - settings.SL_BUFFER
+                tp = entry + (entry - stop) * settings.RR_RATIO
 
-                self.last_signal_time = current_time
-                self.last_breakout_level = self.breakout_level
-
-                self.breakout_state = None
-                self.breakout_level = None
-
-                # reset range
-                self.range_active = False
-                self.range_high = None
-                self.range_low = None
-
-                return Signal(
+                signal = Signal(
                     pair=settings.PAIR,
                     direction="long",
                     entry=entry,
@@ -159,6 +180,35 @@ class SignalEngine:
                     timestamp=current_time
                 )
 
+                print(f"""
+TIME: {current_time}
+
+RANGE:
+LOW: {range_low:.5f}
+HIGH: {range_high:.5f}
+SIZE: {range_size:.5f}
+
+BREAKOUT: LONG
+
+ENTRY: {entry}
+SL: {stop}
+TP: {tp}
+""")
+
+                self.last_signal_time = current_time
+                self.used_levels.append((self.breakout_level, current_time))
+
+                # reset
+                self.breakout_state = None
+                self.breakout_level = None
+                self.breakout_time = None
+
+                self.range_active = False
+                self.range_high = None
+                self.range_low = None
+
+                return signal
+
         # =========================================================
         # SHORT ENTRY
         # =========================================================
@@ -166,22 +216,15 @@ class SignalEngine:
 
             if last["high"] >= self.breakout_level and last["close"] < self.breakout_level:
 
+                retest_depth = last["high"] - self.breakout_level
+                if retest_depth > range_size * settings.RETEST_DEPTH:
+                    return None
+
                 entry = float(last["close"])
-                stop = self.breakout_level + atr * 0.5
-                tp = entry - (stop - entry) * settings.RR
+                stop = self.breakout_level + settings.SL_BUFFER
+                tp = entry - (stop - entry) * settings.RR_RATIO
 
-                self.last_signal_time = current_time
-                self.last_breakout_level = self.breakout_level
-
-                self.breakout_state = None
-                self.breakout_level = None
-
-                # reset range
-                self.range_active = False
-                self.range_high = None
-                self.range_low = None
-
-                return Signal(
+                signal = Signal(
                     pair=settings.PAIR,
                     direction="short",
                     entry=entry,
@@ -189,5 +232,34 @@ class SignalEngine:
                     tp=float(tp),
                     timestamp=current_time
                 )
+
+                print(f"""
+TIME: {current_time}
+
+RANGE:
+LOW: {range_low:.5f}
+HIGH: {range_high:.5f}
+SIZE: {range_size:.5f}
+
+BREAKOUT: SHORT
+
+ENTRY: {entry}
+SL: {stop}
+TP: {tp}
+""")
+
+                self.last_signal_time = current_time
+                self.used_levels.append((self.breakout_level, current_time))
+
+                # reset
+                self.breakout_state = None
+                self.breakout_level = None
+                self.breakout_time = None
+
+                self.range_active = False
+                self.range_high = None
+                self.range_low = None
+
+                return signal
 
         return None
