@@ -1,0 +1,7 @@
+CLIENT_ID = "28061_BBvcxUdJSkkeWGF2jN7lr101aaK5it515K4BzCIMOV1PDlL7Uz"
+CLIENT_SECRET = "YpIU7sYCb5KNEGThsv8fvlAR4xXWK0821Q1GUt51Vc8lTCOsVl"
+
+HOST = "demo.ctraderapi.com"
+PORT = 5035
+
+REDIRECT_URI = "http://localhost"

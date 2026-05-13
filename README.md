@@ -180,30 +180,41 @@ class Signal:
 ## 📁 Структура проекта
 
 ```
-app/
+.
 │
-├── main.py
-├── config/
-│   └── settings.py
+├── README.md
+├── requirements.txt
+├── generate_data.py
+├── test_signal.py
+├── .cursorrules
+├── .gitignore
+├── .windsurfignore
 │
 ├── data/
-│   └── data_provider.py
+│   └── (CSV файлы игнорируются .windsurfignore)
 │
-├── models/
-│   └── signal.py
-│
-├── strategy/
-│   ├── range_detector.py
-│   ├── breakout.py
-│   ├── retest.py
-│   └── signal_engine.py
-│
-├── bot/
-│   └── telegram_bot.py
-│
-└── storage/
-    └── logger.py
+└── app/
+    ├── main.py
+    ├── config/
+    │   └── settings.py
+    ├── data/
+    │   ├── data_provider.py
+    │   └── dukascopy_loader.py
+    ├── models/
+    │   └── signal.py
+    ├── strategy/
+    │   ├── __init__.py
+    │   ├── breakout.py
+    │   └── signal_engine.py
+    ├── bot/
+    │   └── telegram_bot.py
+    ├── storage/
+    │   └── logger.py
+    └── utils/
+        └── __init__.py
 ```
+
+**Примечание:** Файлы `__pycache__/`, `venv/`, `*.csv` и другие артефакты исключены из структуры согласно `.windsurfignore`.
 
 ---
 

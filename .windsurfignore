@@ -1,0 +1,53 @@
+# --- Windsurf & AI Specific ---
+# Игнорируем внутренние логи и кэш самой IDE
+.windsurf/
+.codeium/
+*.log
+
+# --- Python Core ---
+# Не даем ИИ читать байт-код
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environments ---
+# САМОЕ ВАЖНОЕ: чтобы агент не индексировал тысячи файлов зависимостей
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+share/
+
+# --- Environment & Secrets ---
+# Защита приватности: Cascade не должен видеть твои ключи
+.env
+.env.*
+*.secret
+secrets.json
+
+# --- Distribution / Build ---
+# Игнорируем артефакты сборки
+dist/
+build/
+*.egg-info/
+nosetests.xml
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+
+# --- Databases & Large Files ---
+# Если твой сканер пишет логи или базу локально
+*.db
+*.sqlite3
+*.csv
+*.jsonl
+storage/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
